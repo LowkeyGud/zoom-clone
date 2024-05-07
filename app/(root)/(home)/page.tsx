@@ -1,9 +1,11 @@
-import React from 'react'
+import React from "react";
 
 const Home = () => {
   return (
-    <div>Home</div>
-  )
-}
+    <section className="flex size-full flex-col gap-10 text-white">
+      <h1 className="text-xl font-bold lg:text-3xl">Home</h1>
+    </section>
+  );
+};
 
-export default Home
+export default Home;
