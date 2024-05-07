@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import MobileNav from "./MobileNav";
 
 const Navbar = () => {
   return (
@@ -16,7 +17,9 @@ const Navbar = () => {
           ZoOoM
         </p>
       </Link>
-      <div className="flex-between gap-5"></div>
+      <div className="flex-between gap-5">
+        <MobileNav />
+      </div>
     </nav>
   );
 };
