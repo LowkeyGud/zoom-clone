@@ -1,9 +1,10 @@
-import React from 'react'
+"use-client";
 
-const Meeting = () => {
-  return (
-    <div>Meeting</div>
-  )
-}
+import { useParams } from "next/navigation";
+import React from "react";
 
-export default Meeting
+const Meeting = ({ params }: { params: { id: string } }) => {
+  return <div>Meeting : {params.id}</div>;
+};
+
+export default Meeting;
