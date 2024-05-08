@@ -5,8 +5,11 @@ import Navbar from "@/components/Navbar";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "ZoOom",
-  description: "A workspace for your team, powered by Stream Chat and Clerk.",
+  title: "ZoOoM",
+  description: "A zoom clone wannabe",
+  icons: {
+    icon: "/icons/logo.svg"
+  }
 };
 
 const RootLayout = ({ children }: Readonly<{ children: ReactNode }>) => {
