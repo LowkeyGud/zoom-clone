@@ -7,9 +7,7 @@ const Home = () => {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const date = new Intl.DateTimeFormat("en-US", { dateStyle: "full" }).format(
-    now
-  );
+  const date = new Intl.DateTimeFormat([], { dateStyle: "full" }).format(now);
 
   return (
     <section className="flex size-full flex-col gap-5 text-white">
