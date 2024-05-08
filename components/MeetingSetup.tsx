@@ -8,7 +8,7 @@ import {
 } from "@stream-io/video-react-sdk";
 
 import { Button } from "./ui/button";
-import { Alert } from "./ui/alert";
+import Alert from "./Alert";
 
 const MeetingSetup = ({
   setIsSetupComplete,
