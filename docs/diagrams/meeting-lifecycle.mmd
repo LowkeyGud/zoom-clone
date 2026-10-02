@@ -1,0 +1,23 @@
+%%{init: {"theme": "default"}}%%
+sequenceDiagram
+  participant U as User
+  participant App as Next.js App
+  participant Act as tokenProvider<br/>server action
+  participant S as Stream Video API
+  participant H as History<br/>upcoming / previous
+
+  U->>App: Dashboard cards
+  App->>App: Create or schedule meeting
+  App-->>U: Shareable link + one-tap copy
+  U->>App: Open meeting link
+  App->>App: Setup preview (mic/camera toggles)
+  App->>Act: Request token (Clerk session)
+  Act->>S: StreamClient.createToken (1h)
+  S-->>Act: Token
+  Act-->>App: Token (secret never leaves server)
+  App->>S: Join or create call by ID
+  S-->>App: Media + call state
+  App-->>U: Call grid
+  U->>App: Leave
+  App->>H: File under upcoming or previous by starts_at
+  App->>App: Recordings resolve to Stream playback URLs

@@ -1,168 +1,142 @@
-# ZoOoM
+# ZoOoM — Zoom Clone
 
-A video conferencing app built as a Zoom clone, using [Next.js](https://nextjs.org/) 14 (App Router) with [Clerk](https://clerk.com/) for authentication and [Stream](https://getstream.io/video/) for real-time video.
+> Self-owned video conferencing: instant, scheduled, and personal-room meetings with device preview, history, and Stream-hosted recordings.
 
-> **Status: work in progress.** See [Known limitations](#known-limitations).
+**Stack:** Next.js 14.2.3 (App Router) · React 18 · TypeScript 5 · Clerk 5 · Stream Video (`node-sdk` + `video-react-sdk`) · Tailwind 3.4 + shadcn/Radix · `react-datepicker`
 
-## Features
+![ZoOoM dashboard with meeting cards](docs/screenshots/zoom-dashboard.png)
 
-- **Instant meetings** — create and join a call immediately
-- **Scheduled meetings** — set a description and start time, then share the generated link
-- **Join by link** — paste a meeting URL to join
-- **Personal room** — a stable, linkable room per user
-- **Meeting room** — device preview with mic and camera toggle, plus an "join with mic and camera off" option
-- **Call history** — upcoming and previous meetings, split by `starts_at`
-- **Recordings** — lists recordings stored on Stream and links out to each one's hosted playback URL
-- **Copy meeting link** to clipboard on creation
-
-## Tech stack
-
-| Concern | Choice |
+| Fact | Evidence |
 | --- | --- |
-| Framework | Next.js 14.2.3 (App Router, Server Components) |
-| UI | React 18, TypeScript 5 |
-| Styling | Tailwind CSS 3.4, custom `dark-*` palette in `tailwind.config.ts` |
-| Components | shadcn/ui (`default` style, slate base) on Radix UI |
-| Auth | Clerk 5 (`@clerk/nextjs`) |
-| Video | Stream Video (`@stream-io/video-react-sdk`) |
-| Scheduling UI | `react-datepicker` |
-| Icons | `lucide-react` |
+| Full meeting lifecycle in one codebase | `app/(root)/(home)` — home, personal-room, previous, recordings, upcoming + `meeting/[id]` |
+| Stream secrets never reach the browser | `tokenProvider` server action (`action/stream.action.ts`) mints per-user tokens |
+| Timezone-correct history split | `ClientTime` component + `Time*` fix sequence in `git log` |
+| 21 commits from auth to recordings | History: Clerk → Stream basics → meeting-by-ID → history pages → ClientTime → engine pin |
 
-## Prerequisites
+## The Problem
 
-- **Node.js 24.x** — pinned via `engines` in `package.json`. Earlier versions will build but Vercel rejects them; see [Deployment](#deployment).
-- A Clerk application
-- A Stream Video application
+Small teams, tutors, and interviewers need link-share meetings with a revisit path — but standing up even a thin Zoom alternative means solving auth, realtime media, scheduling, and recordings together. Ad-hoc calls can't wait for setup; planned sessions need shareable links; past decisions need playback.
 
-## Getting started
+## The Solution
 
-**1. Install dependencies**
+A Next.js App Router app where Clerk owns identity and Stream Video owns media. Server-component pages render the dashboard and history; client islands render the call room. A server action mints short-lived Stream tokens per user, so the browser never sees the Stream secret. Meetings and recordings live in Stream — the app holds no meeting database.
 
-```bash
-npm install
+```mermaid
+graph TD
+  SignIn[Clerk sign-in / sign-up] --> Home[Dashboard meeting cards]
+  Home -->|instant / schedule / join / personal| Setup[Setup preview<br/>mic-camera toggles + join-muted]
+  Setup --> Tok[tokenProvider server action<br/>StreamClient.createToken 1h expiry]
+  Tok --> Stream[Stream Video API]
+  Stream --> Call[meeting-id-call room<br/>video-react-sdk]
+  Call --> Hist[upcoming vs previous by starts_at<br/>ClientTime]
+  Call --> Rec[recordings page<br/>Stream playback URLs]
 ```
 
-**2. Configure environment variables**
+## Key Features
 
-```bash
-cp .env.example .env.local
-```
+**Instant meetings.** Create-and-join immediately; the client creates a call by ID once the server action returns a token. Why it matters: ad-hoc calls die if they require scheduling.
 
-Then fill in `.env.local` with your keys. `.env*.local` is gitignored, so this file is safe to keep uncommitted.
+**Scheduled meetings.** Description + start time via `react-datepicker`, stored with `starts_at`, link shared ahead of time. Why it matters: planned sessions are an invitation workflow, not just a room.
 
-**3. Run the dev server**
+**Join by link.** `meeting/[id]` resolves the call ID from the URL. Why it matters: guests navigate with a paste, not an account tour.
 
-```bash
-npm run dev
-```
+**Personal room.** A stable per-user room for recurring 1:1s. Why it matters: one permanent URL beats a new link per session.
 
-Open [http://localhost:3000](http://localhost:3000). You should be redirected to Clerk's sign-in page.
+**Device preview.** Mic/camera toggles plus join-muted before entering the grid. Why it matters: prevents hot-mic surprises — the cheapest trust feature in conferencing.
 
-## Environment variables
+**Upcoming vs. previous.** History partitions on `starts_at` through a dedicated client-time layer. Why it matters: users think in "what's next / what happened," not in raw call lists.
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes | Clerk frontend key (`pk_…`). Read by `clerkMiddleware` on every request. |
-| `CLERK_SECRET_KEY` | Yes | Clerk backend key (`sk_…`). Used by `clerkMiddleware` and the token server action. |
-| `NEXT_PUBLIC_STREAM_API_KEY` | Yes | Stream frontend key, exposed to the browser. |
-| `STREAM_SECRET_KEY` | Yes | Stream server key. Never sent to the client. |
-| `NEXT_PUBLIC_BASE_URL` | Recommended | Absolute origin used to build shareable meeting links. Links will be malformed without it. |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` | Optional | Overrides where Clerk sends unauthenticated users. Defaults to `/sign-in`. |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | Optional | Overrides Clerk's sign-up destination. Defaults to `/sign-up`. |
+**Recordings with playback.** The recordings page resolves each item to its Stream-hosted URL. Why it matters: decisions need revisiting more than meetings need repeating.
 
-Values must be copied **exactly** as issued. A trailing space or newline copied out of a dashboard will cause Clerk's key parser to throw at runtime — see [Troubleshooting](#troubleshooting).
+**One-tap link copy.** Generated URL written to clipboard on creation. Why it matters: distribution *is* the job after creation.
 
-## Scripts
+## Key Engineering Decisions
 
-| Command | Description |
+**Problem → Constraint → Decision → Tradeoff → Result**
+
+1. **Stream secret exposure risk.** Constraint: client-side token creation would leak `STREAM_SECRET_KEY`. Decision: `tokenProvider` server action builds the token with `StreamClient` (1-hour expiry, issued 60s early for clock skew) after `currentUser()` check. Tradeoff: every join pays a server round-trip. Result: secrets stay server-side — enforced by the `NEXT_PUBLIC_*` vs. secret key split in `.env.example`.
+
+2. **History buckets wrong across timezones.** Constraint: server-rendered timestamps diverge from client locale. Decision: dedicated `ClientTime` component rendering `starts_at` comparisons client-side, iterated across three fix commits. Tradeoff: extra client component where SSR alone would be simpler. Result: correct local upcoming/previous split — `Testing: Client Time` → `Added: ClientTime` → `Modified: Time*`.
+
+3. **No app database.** Constraint: meeting + recording state already lives in Stream; duplicating it adds sync bugs. Decision: query Stream as the source of truth; Clerk as identity. Tradeoff: history and search are limited to what Stream exposes. Result: zero migrations, zero orphaned meeting rows.
+
+4. **Server pages + client call islands.** Constraint: call SDKs are heavy and device-bound. Decision: dashboard/history as server components, only the meeting room as a client island. Tradeoff: two rendering mental models in one router. Result: landing pages stay light; WebRTC JS loads where it's used.
+
+## Iteration Story
+
+The 21-commit history reads as a deliberate layering (oldest → newest):
+
+`create-next-app` → Shadcn + colors + public assets → sidebar/nav/skeletons → Clerk auth → home cards → Stream basics → meeting-by-ID → video-call settings → metadata → upcoming/recording/previous → personal room → home timestamps → `Time*` fixes → ClientTime → Node 24 engine pin → README overview.
+
+Scheduling and history arrived *after* the call worked; timezone correctness arrived *after* history worked. Each layer fixed what the previous one exposed.
+
+## User Experience
+
+Sign in → dashboard of meeting-type cards (new, schedule, join, personal room). Creating or scheduling yields a link with one-tap copy. Joining opens the setup preview (camera/mic toggles, join-muted) before the call grid. Afterward the meeting lands in upcoming or previous; recordings surface with playable links. The personal room stays pinned as the always-ready URL.
+
+Visually: a dark Zoom-like console (custom `dark-*` palette in `tailwind.config.ts`), Yoom iconography from `public/icons/`, avatar art and hero background. Funnel is act (cards) → prepare (setup) → meet (call) → revisit (history/recordings).
+
+## Results & Evidence
+
+**Verifiable:** full lifecycle routes committed; server-action token flow reviewable in `action/stream.action.ts`; ClientTime fix sequence in history; Node 24 pin in `package.json` engines.
+
+**Honest status:** the prior README described this as work in progress with known limitations. There is no test suite, no committed workflow, and no usage metrics in the repo — run health and call quality are observed in the live deployment (linked above), not proven here.
+
+## Technical Details
+
+| Area | Detail |
 | --- | --- |
-| `npm run dev` | Development server |
-| `npm run build` | Production build (includes ESLint and type checking) |
-| `npm run start` | Serve the production build |
-| `npm run lint` | ESLint only |
+| Framework | Next.js 14.2.3 App Router, React 18, TypeScript 5, Tailwind 3.4, shadcn/ui on Radix |
+| Auth | Clerk (`middleware.ts` gating; `(auth)/sign-in`, `(auth)/sign-up` routes) |
+| Video | `@stream-io/node-sdk` (server token) + `@stream-io/video-react-sdk` (client room) |
+| Scheduling UI | `react-datepicker` feeding `starts_at` |
+| Key files | `app/(root)/(home)/page` + personal-room/previous/recordings/upcoming, `app/(root)/meeting/[id]/page`, `action/stream.action.ts`, `components/`, `providers/`, `constants/`, `hooks/` |
+| Secrets | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_SIGN_IN_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_URL`, `NEXT_PUBLIC_STREAM_API_KEY`, `STREAM_SECRET_KEY`, `NEXT_PUBLIC_BASE_URL` |
+| Storage | No app DB — meetings/recordings in Stream, identity in Clerk |
+| Errors | Unauthenticated/secret-missing throws in `tokenProvider`; SDK error states on join; empty history sets handled |
 
-## Routes
+## Setup
 
-| Route | Description | Protected |
-| --- | --- | --- |
-| `/` | Dashboard with meeting launcher | Yes |
-| `/upcoming` | Scheduled, not-yet-started meetings | Yes |
-| `/previous` | Ended meetings | Yes |
-| `/recordings` | Meeting recordings | Yes |
-| `/personal-room` | Your personal, persistent room | Yes |
-| `/meeting/[id]` | In-call room (setup, then meeting) | Yes |
-| `/sign-in` | Clerk sign-in | No |
-| `/sign-up` | Clerk sign-up | No |
+1. **Prerequisites:** Node 24 (engines pin), npm, Clerk and Stream accounts.
+2. **Clone and install:**
+   ```bash
+   git clone https://github.com/LowkeyGud/zoom-clone.git
+   cd zoom-clone
+   npm install
+   ```
+3. **Environment:** copy `.env.example` to `.env.local` and fill the seven keys above. Set `NEXT_PUBLIC_BASE_URL` to the deployment origin so generated links resolve.
+4. **External services:** create a Clerk app; create a Stream app and read its API key/secret from the Stream dashboard.
+5. **Run:**
+   ```bash
+   npm run dev
+   ```
+   Open `http://localhost:3000`, sign in via Clerk, create a meeting. Production: `npm run build` then `npm start`. Camera/mic require HTTPS or localhost.
+6. **Verify:** instant meeting joined from a second browser profile; a future meeting lands in upcoming; after ending, previous + recordings update.
+7. **Common issues:** join fails → Stream key/secret mismatch or token action error (server logs); camera/mic blocked → HTTPS/localhost + permissions; history buckets wrong → client-time handling.
 
-Protected routes are enforced in `middleware.ts` via `createRouteMatcher`, which redirects unauthenticated visitors to sign-in.
+No GitHub Actions workflow is committed in this repo.
 
-## How authentication and video connect
+## Lessons / Takeaways
 
-Two independent services are involved, joined by a short-lived token:
+- Token provisioning is the security boundary in any third-party realtime integration — server-minting was the first load-bearing decision.
+- Timezone bugs surface only after history exists; isolating time rendering in one client component contained the fix.
+- Next step would be recording lifecycle UX (loading/empty/error states) and call-quality telemetry, neither of which the repo currently records.
 
-1. `middleware.ts` wraps every request in `clerkMiddleware`, which validates the Clerk session cookie and calls `auth().protect()` on protected routes.
-2. `providers/StreamClientProvider.tsx` builds a `StreamVideoClient` once Clerk reports a signed-in user.
-3. That client needs a Stream token, which it requests from the `tokenProvider` server action in `action/stream.action.ts`. The action runs server-side, calls Clerk's `currentUser()`, and mints a token with `STREAM_SECRET_KEY`. The Stream secret never reaches the browser.
+## Links
 
-`useGetCalls` (`hooks/useGetCalls.ts`) queries calls where the user is creator or a member, then partitions them into upcoming and ended by comparing `starts_at` against the current time.
+- Repository: `https://github.com/LowkeyGud/zoom-clone`
+- Live Demo: `https://zoom-clone-hazel-pi.vercel.app`
 
-## Project structure
+## Diagrams
 
-```
-app/
-  layout.tsx              Root layout, ClerkProvider + theming
-  (auth)/                Unauthenticated routes
-  (root)/                Authenticated shell
-    (home)/              Dashboard and call-history pages
-    meeting/[id]/        In-call room
-action/stream.action.ts   Server action that mints Stream tokens
-components/              App components
-  ui/                    shadcn/ui primitives
-constants/               Sidebar links and avatar images
-hooks/                   useGetCalls, useGetCallById
-lib/utils.ts             cn() class-name helper
-providers/               StreamVideoProvider
-middleware.ts            Clerk route protection
-```
+Generated from the codebase with the mermaid-skill workflow (validate via Kroki → export SVG → vision self-check). Sources live in `docs/diagrams/` — edit the `.mmd`, re-render, review. SVG is the committed format.
 
-Route groups (`(auth)`, `(root)`, `(home)`) keep shared layouts without affecting the URL.
+**Meeting lifecycle** (`docs/diagrams/meeting-lifecycle.mmd` — create → preview → server-minted token → call → history):
 
-## Deployment
+![Meeting lifecycle sequence diagram](docs/diagrams/meeting-lifecycle.svg)
 
-The app deploys to Vercel with no framework configuration.
+## Screenshots
 
-**Node version is the one thing that will bite you.** `package.json` pins `"engines": { "node": "24.x" }`. Vercel disabled Node 20 for new builds on October 1, 2026, so a project without this pin fails to build with an error about a discontinued Node version. Specify a major version only — Vercel rejects `major.minor.patch` in `engines` with *"only major Node.js Version can be selected"*.
+Captured from the live deployment:
 
-Set the version in **both** places, since a project still on Node 20 in project settings may be rejected before `engines` is consulted:
-
-1. `engines.node` in `package.json` (already committed)
-2. Project Settings → Build and Deployment → Node.js Version
-
-Changing `engines` alone does not bust Vercel's build cache. On the first deploy after this change, use **Redeploy** with the build cache unchecked.
-
-## Troubleshooting
-
-**Every page returns `500 MIDDLEWARE_INVOCATION_FAILED`**
-
-`clerkMiddleware` throws synchronously if either Clerk key is missing or blank, and the error is not caught, so Vercel replaces the whole site with an error page. The middleware matcher (`/((?!.*\..*|_next).*)`) covers effectively all routes, which is why the failure looks total rather than localized.
-
-Check, in order:
-
-1. Both `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are set on the **same** environment the deployment uses (Preview and Production are configured separately).
-2. The values have no stray whitespace or newline.
-3. The deployment was **redeployed** after the keys were added. Vercel does not inject newly added variables into existing deployments.
-
-Read the actual exception in Vercel's **Runtime Logs** — it names the missing key explicitly (`Missing secretKey` / `Missing publishableKey`).
-
-**The build succeeds but the site is broken**
-
-`next build` passes even with no Clerk keys configured. Every route renders dynamically (each shows `ƒ` in the build output), so nothing reaches Clerk server-side during the build, and `ClerkProvider` does not validate keys at build time. A green build therefore says nothing about whether auth works.
-
-If the page hangs on a spinner rather than rendering, check for a missing `NEXT_PUBLIC_STREAM_API_KEY`: `StreamClientProvider` renders `<Loader />` until Clerk reports a signed-in user and the client is constructed, and it throws `Stream API key is missing` if the key is absent.
-
-## Known limitations
-
-- The "Upcoming Meeting at 12:30 PM" banner on the dashboard is a hardcoded placeholder, not wired to real data.
-- Screen sharing and in-app recording are not implemented; the recordings page only surfaces recordings created on Stream and hands off to Stream's hosted player.
-- Recording playback uses `router.push()` with an absolute external URL, which the App Router treats as a route path rather than a full navigation, so the Play button may not leave the app as intended.
-- Meeting links are built from `NEXT_PUBLIC_BASE_URL`, which is not validated — a wrong value yields broken share links rather than an error.
+![ZoOoM dashboard with meeting cards](docs/screenshots/zoom-dashboard.png)
